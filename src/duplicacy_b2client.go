@@ -38,7 +38,7 @@ type B2UploadArgument struct {
 	Token string
 }
 
-var B2AuthorizationURL = "https://api.backblazeb2.com/b2api/v1/b2_authorize_account"
+var B2AuthorizationURL = "https://api.backblazeb2.com/b2api/v2/b2_authorize_account"
 
 type B2Client struct {
 	HTTPClient         *http.Client
@@ -64,6 +64,9 @@ type B2Client struct {
 	TestMode           bool
 
 	LastAuthorizationTime int64
+
+	RetentionMode         string
+	LockPeriod            time.Duration
 }
 
 // URL encode the given path but keep the slashes intact
@@ -143,7 +146,7 @@ func (client *B2Client) retry(retries int, response *http.Response) int {
 }
 
 func (client *B2Client) call(threadIndex int, requestURL string, method string, requestHeaders map[string]string, input interface{}) (
-	                         io.ReadCloser, http.Header, int64, error) {
+						  io.ReadCloser, http.Header, int64, error) {
 
 	var response *http.Response
 
@@ -158,6 +161,7 @@ func (client *B2Client) call(threadIndex int, requestURL string, method string, 
 			if err != nil {
 				return nil, nil, 0, err
 			}
+			LOG_DEBUG("BACKBLAZE_CALL", "[%d] URL Input: '%s'", threadIndex, string(jsonInput))
 			inputReader = bytes.NewReader(jsonInput)
 		case int:
 			inputReader = bytes.NewReader([]byte(""))
@@ -215,6 +219,8 @@ func (client *B2Client) call(threadIndex int, requestURL string, method string, 
 			}
 		}
 
+		LOG_DEBUG("BACKBLAZE_CALL", "[%d] Performing URL request '%s'", threadIndex, requestURL)
+
 		response, err = client.HTTPClient.Do(request)
 		if err != nil {
 
@@ -244,7 +250,8 @@ func (client *B2Client) call(threadIndex int, requestURL string, method string, 
 		}
 
 		e := &B2Error{}
-		if err := json.NewDecoder(response.Body).Decode(e); err != nil {
+		err_info := json.NewDecoder(response.Body).Decode(e)
+		if err_info != nil {
 			LOG_TRACE("BACKBLAZE_CALL", "[%d] URL request '%s %s' returned status code %d", threadIndex, method, requestURL, response.StatusCode)
 		} else {
 			LOG_TRACE("BACKBLAZE_CALL", "[%d] URL request '%s %s' returned %d %s", threadIndex, method, requestURL, response.StatusCode, e.Message)
@@ -255,6 +262,11 @@ func (client *B2Client) call(threadIndex int, requestURL string, method string, 
 		if response.StatusCode == 401 {
 			if requestURL == B2AuthorizationURL {
 				return nil, nil, 0, fmt.Errorf("Authorization failure")
+			}
+
+			if e.Code == "access_denied" {
+				LOG_TRACE("BACKBLAZE_CALL", "[%d] URL request '%s' failed because of File Lock", threadIndex)
+				return nil, nil, 0, nil
 			}
 
 			// Attempt authorization again.  If authorization is actually not done, run the random backoff
@@ -291,11 +303,19 @@ func (client *B2Client) call(threadIndex int, requestURL string, method string, 
 
 }
 
+type B2AuthorizeAccountAllowed struct {
+	Capabilities       []string
+	BucketID           string
+	BucketName         string
+	NamePrefix         string
+}
+
 type B2AuthorizeAccountOutput struct {
 	AccountID          string
 	AuthorizationToken string
 	APIURL             string
 	DownloadURL        string
+	Allowed            B2AuthorizeAccountAllowed
 }
 
 func (client *B2Client) AuthorizeAccount(threadIndex int) (err error, allowed bool) {
@@ -329,6 +349,8 @@ func (client *B2Client) AuthorizeAccount(threadIndex int) (err error, allowed bo
 	if client.DownloadURL == "" {
 		client.DownloadURL = output.DownloadURL
 	}
+
+	LOG_INFO("BACKBLAZE_URL", "authorized capabilities are: %s", output.Allowed.Capabilities)
 	LOG_INFO("BACKBLAZE_URL", "download URL is: %s", client.DownloadURL)
 	client.IsAuthorized = true
 
@@ -337,11 +359,32 @@ func (client *B2Client) AuthorizeAccount(threadIndex int) (err error, allowed bo
 	return nil, true
 }
 
+type ListBucketDefaultRetentionPeriod struct {
+	Duration int
+	Unit     string
+}
+
+type ListBucketDefaultRetention struct {
+	Mode   string
+	Period ListBucketDefaultRetentionPeriod
+}
+
+type ListBucketFileLockValue struct {
+	IsFileLockEnabled bool
+	DefaultRetention  ListBucketDefaultRetention
+}
+
+type ListBucketFileLock struct {
+	IsClientAuthorizedToRead bool
+	Value                    ListBucketFileLockValue
+}
+
 type ListBucketOutput struct {
-	AccountID  string
-	BucketID   string
-	BucketName string
-	BucketType string
+	AccountID             string
+	BucketID              string
+	BucketName            string
+	BucketType            string
+	FileLockConfiguration ListBucketFileLock
 }
 
 func (client *B2Client) FindBucket(bucketName string) (err error) {
@@ -350,7 +393,7 @@ func (client *B2Client) FindBucket(bucketName string) (err error) {
 	input["accountId"] = client.AccountID
 	input["bucketName"] = bucketName
 
-	url := client.getAPIURL() + "/b2api/v1/b2_list_buckets"
+	url := client.getAPIURL() + "/b2api/v2/b2_list_buckets"
 
 	readCloser, _, _, err := client.call(0, url, http.MethodPost, nil, input)
 	if err != nil {
@@ -369,6 +412,22 @@ func (client *B2Client) FindBucket(bucketName string) (err error) {
 		if bucket.BucketName == bucketName {
 			client.BucketName = bucket.BucketName
 			client.BucketID = bucket.BucketID
+			if bucket.FileLockConfiguration.IsClientAuthorizedToRead && bucket.FileLockConfiguration.Value.IsFileLockEnabled {
+				client.RetentionMode = bucket.FileLockConfiguration.Value.DefaultRetention.Mode
+				factor := 1
+				if bucket.FileLockConfiguration.Value.DefaultRetention.Period.Unit == "years" {
+					factor = 365*24
+				} else if bucket.FileLockConfiguration.Value.DefaultRetention.Period.Unit == "days" {
+					factor = 24
+				} else {
+					return fmt.Errorf("Backblaze API returned unexpected retention units %s", bucket.FileLockConfiguration.Value.DefaultRetention.Period.Unit)
+				}
+				client.LockPeriod, err = time.ParseDuration(fmt.Sprint(bucket.FileLockConfiguration.Value.DefaultRetention.Period.Duration * factor, "h"))
+				if err != nil {
+					return err
+				}
+				LOG_TRACE("FIND_BUCKET", "Detected object lock mode %s with lock period %s", client.RetentionMode, client.LockPeriod.String())
+			}
 			break
 		}
 	}
@@ -380,12 +439,22 @@ func (client *B2Client) FindBucket(bucketName string) (err error) {
 	return nil
 }
 
+type B2FileRetentionValue struct {
+	Mode                 string
+	RetainUntilTimestamp int64
+}
+
+type B2FileRetention struct {
+	Value                    B2FileRetentionValue
+}
+
 type B2Entry struct {
 	FileID          string
 	FileName        string
 	Action          string
-	Size            int64
+	ContentLength   int64
 	UploadTimestamp int64
+	FileRetention   B2FileRetention
 }
 
 type B2ListFileNamesOutput struct {
@@ -417,13 +486,13 @@ func (client *B2Client) ListFileNames(threadIndex int, startFileName string, sin
 	input["prefix"] = client.StorageDir
 
 	for {
-		apiURL := client.getAPIURL() + "/b2api/v1/b2_list_file_names"
+		apiURL := client.getAPIURL() + "/b2api/v2/b2_list_file_names"
 		requestHeaders := map[string]string{}
 		requestMethod := http.MethodPost
 		var requestInput interface{}
 		requestInput = input
 		if includeVersions {
-			apiURL = client.getAPIURL() + "/b2api/v1/b2_list_file_versions"
+			apiURL = client.getAPIURL() + "/b2api/v2/b2_list_file_versions"
 		} else if singleFile {
 			// handle a single file with no versions as a special case to download the last byte of the file
 			apiURL = client.getDownloadURL() + "/file/" + client.BucketName + "/" + B2Escape(client.StorageDir + startFileName)
@@ -455,6 +524,8 @@ func (client *B2Client) ListFileNames(threadIndex int, startFileName string, sin
 			requiredHeaders := []string{
 				"x-bz-file-id",
 				"x-bz-file-name",
+				"x-bz-file-retention-retain-until-timestamp",
+				"x-bz-file-retention-mode",
 			}
 			missingKeys := []string{}
 			for _, headerKey := range requiredHeaders {
@@ -468,6 +539,8 @@ func (client *B2Client) ListFileNames(threadIndex int, startFileName string, sin
 			// construct the B2Entry from the response headers of the download request
 			fileID := responseHeader.Get("x-bz-file-id")
 			fileName := responseHeader.Get("x-bz-file-name")
+			retentionMode := responseHeader.Get("x-bz-file-retention-mode")
+			retainUntil, _ := strconv.ParseInt(responseHeader.Get("x-bz-file-retention-retain-until-timestamp"), 10, 64)
 			unescapedFileName, err := url.QueryUnescape(fileName)
 			if err == nil {
 				fileName = unescapedFileName
@@ -493,7 +566,7 @@ func (client *B2Client) ListFileNames(threadIndex int, startFileName string, sin
 			}
 			fileUploadTimestamp, _ := strconv.ParseInt(responseHeader.Get("X-Bz-Upload-Timestamp"), 0, 64)
 
-			return []*B2Entry{{fileID, fileName[len(client.StorageDir):], fileAction, fileSize, fileUploadTimestamp}}, nil
+			return []*B2Entry{{fileID, fileName[len(client.StorageDir):], fileAction, fileSize, fileUploadTimestamp, B2FileRetention{B2FileRetentionValue{retentionMode, retainUntil}}}}, nil
 		}
 
 		if err = json.NewDecoder(readCloser).Decode(&output); err != nil {
@@ -538,13 +611,33 @@ func (client *B2Client) ListFileNames(threadIndex int, startFileName string, sin
 	return files, nil
 }
 
+func (client *B2Client) LockFile(threadIndex int, fileName string, fileID string) (err error) {
+	fileRetention := make(map[string]interface{})
+	fileRetention["mode"] = client.RetentionMode
+	//TODO: parameterize lock period
+	fileRetention["retainUntilTimestamp"] = time.Now().Add(client.LockPeriod).UnixMilli()
+	input := make(map[string]interface{})
+	input["fileName"] = client.StorageDir + fileName
+	input["fileId"] = fileID
+	input["fileRetention"] = fileRetention
+
+	url := client.getAPIURL() + "/b2api/v2/b2_update_file_retention"
+	readCloser, _, _, err := client.call(threadIndex, url, http.MethodPost, make(map[string]string), input)
+	if err != nil {
+		return err
+	}
+
+	readCloser.Close()
+	return nil
+}
+
 func (client *B2Client) DeleteFile(threadIndex int, fileName string, fileID string) (err error) {
 
 	input := make(map[string]string)
 	input["fileName"] = client.StorageDir + fileName
 	input["fileId"] = fileID
 
-	url := client.getAPIURL() + "/b2api/v1/b2_delete_file_version"
+	url := client.getAPIURL() + "/b2api/v2/b2_delete_file_version"
 	readCloser, _, _, err := client.call(threadIndex, url, http.MethodPost, make(map[string]string), input)
 	if err != nil {
 		return err
@@ -564,7 +657,7 @@ func (client *B2Client) HideFile(threadIndex int, fileName string) (fileID strin
 	input["bucketId"] = client.BucketID
 	input["fileName"] = client.StorageDir + fileName
 
-	url := client.getAPIURL() + "/b2api/v1/b2_hide_file"
+	url := client.getAPIURL() + "/b2api/v2/b2_hide_file"
 	readCloser, _, _, err := client.call(threadIndex, url, http.MethodPost, make(map[string]string), input)
 	if err != nil {
 		return "", err
@@ -600,7 +693,7 @@ func (client *B2Client) getUploadURL(threadIndex int) error {
 	input := make(map[string]string)
 	input["bucketId"] = client.BucketID
 
-	url := client.getAPIURL() + "/b2api/v1/b2_get_upload_url"
+	url := client.getAPIURL() + "/b2api/v2/b2_get_upload_url"
 	readCloser, _, _, err := client.call(threadIndex, url, http.MethodPost, make(map[string]string), input)
 	if err != nil {
 		return err

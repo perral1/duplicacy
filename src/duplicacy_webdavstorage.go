@@ -453,6 +453,10 @@ func (storage *WebDAVStorage) DownloadFile(threadIndex int, filePath string, chu
 	return err
 }
 
+func (storage *WebDAVStorage) LockFile(threadIndex int, filePath string) (err error) {
+    return nil
+}
+
 // UploadFile writes 'content' to the file at 'filePath'.
 func (storage *WebDAVStorage) UploadFile(threadIndex int, filePath string, content []byte) (err error) {
 

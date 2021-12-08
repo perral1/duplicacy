@@ -19,6 +19,7 @@ const (
 	ChunkOperationFossilize = 3
 	ChunkOperationResurrect = 4
 	ChunkOperationFind = 5
+	ChunkOperationLock = 6
 )
 
 // ChunkTask is used to pass parameters for different kinds of chunk operations.
@@ -171,6 +172,10 @@ func (operator *ChunkOperator) Resurrect(chunkID string, filePath string) {
 	operator.AddTask(ChunkOperationResurrect, chunkID, "", filePath, 0, nil, false, nil)
 }
 
+func (operator *ChunkOperator) Lock(chunkID string) {
+	operator.AddTask(ChunkOperationLock, chunkID, "", "", 0, nil, false, nil)
+}
+
 func (operator *ChunkOperator) Run(threadIndex int, task ChunkTask) {
 	defer func() {
 		atomic.AddInt64(&operator.numberOfActiveTasks, int64(-1))
@@ -271,6 +276,20 @@ func (operator *ChunkOperator) Run(threadIndex int, task ChunkTask) {
 					task.chunkID, task.filePath, err)
 			} else {
 				LOG_INFO("FOSSIL_RESURRECT", "The chunk %s has been resurrected", task.filePath)
+			}
+		}
+	} else if task.operation == ChunkOperationLock {
+		chunkPath, exist, _, err := operator.storage.FindChunk(threadIndex, task.chunkID, false)
+		if err != nil {
+			LOG_ERROR("CHUNK_LOCK", "Failed to locate the path for the chunk %s: %v", task.chunkID, err)
+		} else if !exist {
+			LOG_ERROR("CHUNK_LOCK", "Chunk %s does not exist in the storage", task.chunkID)
+		} else {
+			err = operator.storage.LockFile(threadIndex, chunkPath)
+			if err != nil {
+			    LOG_ERROR("CHUNK_LOCK", "Failed to lock file %s: %v", chunkPath, err)
+			} else {
+		        LOG_INFO("CHUNK_LOCK", "Locked file %s from the storage", chunkPath)
 			}
 		}
 	}

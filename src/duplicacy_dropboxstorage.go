@@ -207,6 +207,10 @@ func (storage *DropboxStorage) DownloadFile(threadIndex int, filePath string, ch
 
 }
 
+func (storage *DropboxStorage) LockFile(threadIndex int, filePath string) (err error) {
+	return nil
+}
+
 // UploadFile writes 'content' to the file at 'filePath'.
 func (storage *DropboxStorage) UploadFile(threadIndex int, filePath string, content []byte) (err error) {
 	if filePath != "" && filePath[0] != '/' {

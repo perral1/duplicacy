@@ -231,6 +231,10 @@ func (storage *SwiftStorage) DownloadFile(threadIndex int, filePath string, chun
 	return err
 }
 
+func (storage *SwiftStorage) LockFile(threadIndex int, filePath string) (err error) {
+	return nil
+}
+
 // UploadFile writes 'content' to the file at 'filePath'.
 func (storage *SwiftStorage) UploadFile(threadIndex int, filePath string, content []byte) (err error) {
 	reader := CreateRateLimitedReader(content, storage.UploadRateLimit/storage.threads)

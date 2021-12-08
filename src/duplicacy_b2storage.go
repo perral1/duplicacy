@@ -6,6 +6,7 @@ package duplicacy
 
 import (
 	"strings"
+	"time"
 )
 
 type B2Storage struct {
@@ -80,7 +81,7 @@ func (storage *B2Storage) ListFiles(threadIndex int, dir string) (files []string
 			} else {
 				files = append(files, entry.FileName[length:])
 			}
-			sizes = append(sizes, entry.Size)
+			sizes = append(sizes, entry.ContentLength)
 		}
 	} else {
 		for _, entry := range entries {
@@ -110,6 +111,11 @@ func (storage *B2Storage) DeleteFile(threadIndex int, filePath string) (err erro
 
 			toBeDeleted = true
 
+			if entry.FileRetention.Value.RetainUntilTimestamp > time.Now().UnixMilli() {
+				LOG_TRACE("STORAGE_DELETE", "Can't delete file %s: haven't met retention time.", filePath)
+				continue
+			}
+
 			err = storage.client.DeleteFile(threadIndex, filePath, entry.FileID)
 			if err != nil {
 				return err
@@ -127,6 +133,12 @@ func (storage *B2Storage) DeleteFile(threadIndex int, filePath string) (err erro
 		if len(entries) == 0 {
 			return nil
 		}
+
+		if entries[0].FileRetention.Value.RetainUntilTimestamp > time.Now().UnixMilli() {
+			LOG_TRACE("STORAGE_DELETE", "Can't delete file %s: haven't met retention time.", filePath)
+			return nil
+		}
+
 		return storage.client.DeleteFile(threadIndex, filePath, entries[0].FileID)
 	}
 }
@@ -193,12 +205,12 @@ func (storage *B2Storage) GetFileInfo(threadIndex int, filePath string) (exist b
 
 	if isFossil {
 		if entries[0].Action == "hide" {
-			return true, false, entries[0].Size, nil
+			return true, false, entries[0].ContentLength, nil
 		} else {
 			return false, false, 0, nil
 		}
 	}
-	return true, false, entries[0].Size, nil
+	return true, false, entries[0].ContentLength, nil
 }
 
 // DownloadFile reads the file at 'filePath' into the chunk.
@@ -213,6 +225,27 @@ func (storage *B2Storage) DownloadFile(threadIndex int, filePath string, chunk *
 
 	_, err = RateLimitedCopy(chunk, readCloser, storage.DownloadRateLimit/storage.client.Threads)
 	return err
+}
+
+func (storage *B2Storage) LockFile(threadIndex int, filePath string) (err error) {
+	entries, err := storage.client.ListFileNames(threadIndex, filePath, true, false)
+	if err != nil {
+		return err
+	}
+
+	if len(entries) == 0 {
+		return nil
+	}
+
+	oldFileRetention := entries[0].FileRetention.Value.RetainUntilTimestamp
+	minFileRetention := time.Now().Add(storage.client.LockPeriod).UnixMilli()
+	if oldFileRetention < minFileRetention {
+		LOG_INFO("LOCK_FILE", "Locking chunk %s until %s, was previously %s", filePath, time.UnixMilli(minFileRetention).String(), time.UnixMilli(oldFileRetention).String())
+		return storage.client.LockFile(threadIndex, filePath, entries[0].FileID)
+	} else {
+		LOG_INFO("LOCK_FILE", "Chunk %s already meets minimum retention period: %s", filePath, time.UnixMilli(oldFileRetention).String())
+		return nil
+	}
 }
 
 // UploadFile writes 'content' to the file at 'filePath'.

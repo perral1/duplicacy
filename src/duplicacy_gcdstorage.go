@@ -811,6 +811,10 @@ func (storage *GCDStorage) DownloadFile(threadIndex int, filePath string, chunk 
 	return err
 }
 
+func (storage *GCDStorage) LockFile(threadIndex int, filePath string) (err error) {
+	return nil
+}
+
 // UploadFile writes 'content' to the file at 'filePath'.
 func (storage *GCDStorage) UploadFile(threadIndex int, filePath string, content []byte) (err error) {
 

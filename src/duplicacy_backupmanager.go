@@ -482,6 +482,13 @@ func (manager *BackupManager) Backup(top string, quickMode bool, threads int, ta
 
 	// This flushes the chunk maker (forcing all remaining data to be sent in chunks)
 	fileChunkMaker.AddData(nil, uploadChunkFunc)
+
+	for _, chunkHash := range localEntryList.PreservedChunkHashes {
+		chunkID := manager.config.GetChunkIDFromHash(chunkHash)
+		LOG_TRACE("LOCK_CHUNK", "Updating object lock on chunk %s", chunkID)
+		chunkOperator.Lock(chunkID)
+	}
+
 	chunkOperator.WaitForCompletion()
 
 	localSnapshot.EndTime = time.Now().Unix()
@@ -520,6 +527,11 @@ func (manager *BackupManager) Backup(top string, quickMode bool, threads int, ta
 	totalMetadataChunkLength, numberOfNewMetadataChunks,
 		totalUploadedMetadataChunkLength, totalUploadedMetadataChunkBytes :=
 		manager.UploadSnapshot(chunkOperator, top, localSnapshot, localEntryList, chunkCache, metadataChunkSize)
+
+	err = LockConfig(manager.storage)
+	if err != nil {
+		LOG_ERROR("LOCK_CONFIG", "Failed to lock config: %v", err)
+	}
 
 	if showStatistics && !RunInBackground {
 		for _, entry := range localEntryList.ModifiedEntries {
@@ -1027,6 +1039,7 @@ func (manager *BackupManager) UploadSnapshot(chunkOperator *ChunkOperator, top s
 		_, found := chunkCache[chunkID]
 		if found {
 			uploadCompletionFunc(chunk, chunkIndex, true, chunkSize, 0)
+			chunkOperator.Lock(chunkID)
 		} else {
 			chunkCache[chunkID] = true
 			chunkOperator.Upload(chunk, chunkIndex, true)

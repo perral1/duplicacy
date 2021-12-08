@@ -407,6 +407,10 @@ func (storage *ACDStorage) DownloadFile(threadIndex int, filePath string, chunk 
 	return err
 }
 
+func (storage *ACDStorage) LockFile(threadIndex int, filePath string) (err error) {
+	return nil
+}
+
 // UploadFile writes 'content' to the file at 'filePath'.
 func (storage *ACDStorage) UploadFile(threadIndex int, filePath string, content []byte) (err error) {
 	parent := path.Dir(filePath)

@@ -215,6 +215,10 @@ func (storage *OneDriveStorage) DownloadFile(threadIndex int, filePath string, c
 	return err
 }
 
+func (storage *OneDriveStorage) LockFile(threadIndex int, filePath string) (err error) {
+	return nil
+}
+
 // UploadFile writes 'content' to the file at 'filePath'.
 func (storage *OneDriveStorage) UploadFile(threadIndex int, filePath string, content []byte) (err error) {
 	err = storage.client.UploadFile(storage.storageDir+"/"+filePath, content, storage.UploadRateLimit/storage.numberOfThread)

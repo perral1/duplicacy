@@ -164,6 +164,10 @@ func (storage *WasabiStorage) DownloadFile(
 	return storage.s3.DownloadFile(threadIndex, filePath, chunk)
 }
 
+func (storage *WasabiStorage) LockFile(threadIndex int, filePath string) (err error) {
+	return nil
+}
+
 func (storage *WasabiStorage) UploadFile(
 	threadIndex int, filePath string, content []byte,
 ) (err error) {

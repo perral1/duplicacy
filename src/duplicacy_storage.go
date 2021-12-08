@@ -48,6 +48,9 @@ type Storage interface {
 	// UploadFile writes 'content' to the file at 'filePath'.
 	UploadFile(threadIndex int, filePath string, content []byte) (err error)
 
+	// Update lock date for file
+	LockFile(threadIndex int, filePath string) (err error)
+
 	// SetNestingLevels sets up the chunk nesting structure.
 	SetNestingLevels(config *Config)
 

@@ -146,6 +146,11 @@ func (storage *FileStorage) DownloadFile(threadIndex int, filePath string, chunk
 
 }
 
+func (storage *FileStorage) LockFile(threadIndex int, filePath string) (err error) {
+	currentTime := time.Now().Local()
+	return os.Chtimes(path.Join(storage.storageDir, filePath), currentTime, currentTime)
+}
+
 // UploadFile writes 'content' to the file at 'filePath'
 func (storage *FileStorage) UploadFile(threadIndex int, filePath string, content []byte) (err error) {
 

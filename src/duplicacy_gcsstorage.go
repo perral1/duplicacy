@@ -250,6 +250,10 @@ func (storage *GCSStorage) DownloadFile(threadIndex int, filePath string, chunk 
 	return err
 }
 
+func (storage *GCSStorage) LockFile(threadIndex int, filePath string) (err error) {
+	return nil
+}
+
 // UploadFile writes 'content' to the file at 'filePath'.
 func (storage *GCSStorage) UploadFile(threadIndex int, filePath string, content []byte) (err error) {
 

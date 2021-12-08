@@ -279,6 +279,10 @@ func (storage *SFTPStorage) DownloadFile(threadIndex int, filePath string, chunk
 	})
 }
 
+func (storage *SFTPStorage) LockFile(threadIndex int, filePath string) (err error) {
+	return nil
+}
+
 // UploadFile writes 'content' to the file at 'filePath'.
 func (storage *SFTPStorage) UploadFile(threadIndex int, filePath string, content []byte) (err error) {
 

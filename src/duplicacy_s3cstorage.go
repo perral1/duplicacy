@@ -171,6 +171,10 @@ func (storage *S3CStorage) DownloadFile(threadIndex int, filePath string, chunk 
 
 }
 
+func (storage *S3CStorage) LockFile(threadIndex int, filePath string) (err error) {
+	return nil
+}
+
 // UploadFile writes 'content' to the file at 'filePath'.
 func (storage *S3CStorage) UploadFile(threadIndex int, filePath string, content []byte) (err error) {
 

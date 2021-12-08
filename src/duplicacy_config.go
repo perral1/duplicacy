@@ -376,6 +376,10 @@ func (config *Config) GetChunkIDFromHash(hash string) string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
+func LockConfig(storage Storage) (err error) {
+	return storage.LockFile(0, "config")
+}
+
 func DownloadConfig(storage Storage, password string) (config *Config, isEncrypted bool, err error) {
 	// Although the default key is passed to the function call the key is not actually used since there is no need to
 	// calculate the hash or id of the config file.
