@@ -255,4 +255,3 @@ func (downloader *ChunkDownloader) WaitForCompletion() {
 		}
 	}
 }
-
